@@ -471,30 +471,64 @@ func TestNormalizePrivilegeObjectName(t *testing.T) {
 
 func TestNormalizeCheckClause(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected string
+		name        string
+		input       string
+		tableSchema string
+		expected    string
 	}{
 		{
-			name:     "varchar IN with ::text cast - user form (has extra parens around column)",
-			input:    "CHECK ((status)::text = ANY (ARRAY['pending'::character varying, 'shipped'::character varying, 'delivered'::character varying]::text[]))",
-			expected: "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
+			name:        "varchar IN with ::text cast - user form (has extra parens around column)",
+			input:       "CHECK ((status)::text = ANY (ARRAY['pending'::character varying, 'shipped'::character varying, 'delivered'::character varying]::text[]))",
+			tableSchema: "public",
+			expected:    "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
 		},
 		{
-			name:     "varchar IN without explicit cast - user form (no extra parens)",
-			input:    "CHECK (status::text = ANY (ARRAY['pending'::character varying, 'shipped'::character varying, 'delivered'::character varying]::text[]))",
-			expected: "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
+			name:        "varchar IN without explicit cast - user form (no extra parens)",
+			input:       "CHECK (status::text = ANY (ARRAY['pending'::character varying, 'shipped'::character varying, 'delivered'::character varying]::text[]))",
+			tableSchema: "public",
+			expected:    "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
 		},
 		{
-			name:     "varchar IN with double cast - applied form (pgschema-generated SQL stored by PostgreSQL)",
-			input:    "CHECK (status::text = ANY (ARRAY['pending'::character varying::text, 'shipped'::character varying::text, 'delivered'::character varying::text]))",
-			expected: "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
+			name:        "varchar IN with double cast - applied form (pgschema-generated SQL stored by PostgreSQL)",
+			input:       "CHECK (status::text = ANY (ARRAY['pending'::character varying::text, 'shipped'::character varying::text, 'delivered'::character varying::text]))",
+			tableSchema: "public",
+			expected:    "CHECK (status::text IN ('pending'::character varying, 'shipped'::character varying, 'delivered'::character varying))",
+		},
+		{
+			name:        "strip same-schema function qualifier (issue #445)",
+			input:       "CHECK (public.validate_foo(val))",
+			tableSchema: "public",
+			expected:    "CHECK (validate_foo(val))",
+		},
+		{
+			name:        "strip same-schema type cast qualifier (issue #445)",
+			input:       "CHECK (val <> 'inactive'::public.status_enum)",
+			tableSchema: "public",
+			expected:    "CHECK (val <> 'inactive'::status_enum)",
+		},
+		{
+			name:        "preserve cross-schema function qualifier",
+			input:       "CHECK (other_schema.validate_foo(val))",
+			tableSchema: "public",
+			expected:    "CHECK (other_schema.validate_foo(val))",
+		},
+		{
+			name:        "strip custom schema function qualifier (issue #445)",
+			input:       "CHECK (test_schema.validate_foo(val))",
+			tableSchema: "test_schema",
+			expected:    "CHECK (validate_foo(val))",
+		},
+		{
+			name:        "no schema stripping when tableSchema is empty",
+			input:       "CHECK (public.validate_foo(val))",
+			tableSchema: "",
+			expected:    "CHECK (public.validate_foo(val))",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeCheckClause(tt.input)
+			result := normalizeCheckClause(tt.input, tt.tableSchema)
 			t.Logf("Input:    %s", tt.input)
 			t.Logf("Output:   %s", result)
 			t.Logf("Expected: %s", tt.expected)
