@@ -141,6 +141,7 @@ func formatParameterString(param *ir.Parameter, includeDefault bool, targetSchem
 	// Add parameter name and type
 	// Strip schema prefix from data type if it matches the target schema
 	dataType := stripSchemaPrefix(param.DataType, targetSchema)
+	dataType = ir.QuoteTypeReference(dataType)
 	if param.Name != "" {
 		part += param.Name + " " + dataType
 	} else {

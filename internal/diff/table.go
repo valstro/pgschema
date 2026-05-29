@@ -1383,6 +1383,9 @@ func writeColumnDefinitionToBuilder(builder *strings.Builder, table *ir.Table, c
 	// Strip schema prefix if it matches the target schema
 	dataType = stripSchemaPrefix(dataType, targetSchema)
 
+	// Quote type reference if it's a reserved word (e.g., "user")
+	dataType = ir.QuoteTypeReference(dataType)
+
 	builder.WriteString(dataType)
 
 	// Check if column is part of any primary key constraint for NOT NULL handling

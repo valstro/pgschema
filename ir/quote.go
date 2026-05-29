@@ -180,3 +180,55 @@ func QualifyEntityNameWithQuotes(entitySchema, entityName, targetSchema string) 
 	quotedSchema := QuoteIdentifier(entitySchema)
 	return quotedSchema + "." + quotedName
 }
+
+// QuoteTypeReference quotes a data type reference if the base type identifier
+// needs quoting (e.g., reserved words like "user", "order"). Built-in types
+// are never quoted. Handles schema-qualified names, array suffixes, and
+// compound type expressions like SETOF and TABLE(...).
+func QuoteTypeReference(typeName string) string {
+	if typeName == "" {
+		return typeName
+	}
+
+	// Already quoted — return as-is
+	if strings.Contains(typeName, `"`) {
+		return typeName
+	}
+
+	// Built-in types never need quoting
+	if IsBuiltInType(typeName) {
+		return typeName
+	}
+
+	// Handle SETOF prefix: only quote the type name after SETOF
+	lower := strings.ToLower(typeName)
+	if strings.HasPrefix(lower, "setof ") {
+		prefix := typeName[:6]
+		rest := typeName[6:]
+		return prefix + QuoteTypeReference(rest)
+	}
+
+	// Types with parentheses that aren't built-in are compound expressions
+	// like TABLE(col1 type, col2 type) — don't quote these
+	if strings.Contains(typeName, "(") {
+		return typeName
+	}
+
+	// Separate array suffix if present
+	arraySuffix := ""
+	base := typeName
+	if strings.HasSuffix(base, "[]") {
+		arraySuffix = "[]"
+		base = strings.TrimSuffix(base, "[]")
+	}
+
+	// Handle schema-qualified types: schema.typename
+	if dotIdx := strings.LastIndex(base, "."); dotIdx != -1 {
+		schema := base[:dotIdx]
+		name := base[dotIdx+1:]
+		return schema + "." + QuoteIdentifier(name) + arraySuffix
+	}
+
+	// Simple unqualified type name
+	return QuoteIdentifier(base) + arraySuffix
+}
