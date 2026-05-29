@@ -15,6 +15,8 @@ func (cd *ColumnDiff) generateColumnSQL(tableSchema, tableName string, targetSch
 	// Handle data type changes - normalize types by stripping target schema prefix
 	oldType := stripSchemaPrefix(cd.Old.DataType, targetSchema)
 	newType := stripSchemaPrefix(cd.New.DataType, targetSchema)
+	oldType = ir.QuoteTypeReference(oldType)
+	newType = ir.QuoteTypeReference(newType)
 
 	// Check if there's a type change AND the column has a default value
 	// When a USING clause is needed, we must: DROP DEFAULT -> ALTER TYPE -> SET DEFAULT

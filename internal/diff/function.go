@@ -205,6 +205,7 @@ func generateFunctionSQL(function *ir.Function, targetSchema string) string {
 	if function.ReturnType != "" {
 		// Strip schema prefix from return type if it matches the target schema
 		returnType := stripSchemaPrefix(function.ReturnType, targetSchema)
+		returnType = ir.QuoteTypeReference(returnType)
 		stmt.WriteString(fmt.Sprintf("\nRETURNS %s", returnType))
 	}
 
