@@ -99,7 +99,7 @@ func normalizeTable(table *Table) {
 
 	// Normalize constraints
 	for _, constraint := range table.Constraints {
-		normalizeConstraint(constraint)
+		normalizeConstraint(constraint, table.Schema)
 	}
 }
 
@@ -1150,14 +1150,14 @@ func normalizePostgreSQLType(input string) string {
 }
 
 // normalizeConstraint normalizes constraint definitions from inspector format to parser format
-func normalizeConstraint(constraint *Constraint) {
+func normalizeConstraint(constraint *Constraint, tableSchema string) {
 	if constraint == nil {
 		return
 	}
 
 	// Only normalize CHECK and EXCLUDE constraints - other constraint types are already consistent
 	if constraint.Type == ConstraintTypeCheck && constraint.CheckClause != "" {
-		constraint.CheckClause = normalizeCheckClause(constraint.CheckClause)
+		constraint.CheckClause = normalizeCheckClause(constraint.CheckClause, tableSchema)
 		// pg_get_constraintdef may include NO INHERIT suffix — strip it and use the NoInherit field instead
 		// (NoInherit is already set from connoinherit in the query)
 	}
@@ -1180,7 +1180,7 @@ func normalizeExclusionDefinition(definition string) string {
 // Since both desired state (from embedded postgres) and current state (from target database)
 // now come from the same PostgreSQL version via pg_get_constraintdef(), they produce identical
 // output. We only need basic cleanup for PostgreSQL internal representations.
-func normalizeCheckClause(checkClause string) string {
+func normalizeCheckClause(checkClause string, tableSchema string) string {
 	// Strip " NOT VALID" and " NO INHERIT" suffixes if present
 	// PostgreSQL's pg_get_constraintdef may include these at the end,
 	// but we control their placement via the IsValid and NoInherit fields
@@ -1206,6 +1206,18 @@ func normalizeCheckClause(checkClause string) string {
 			clause = clause[1 : len(clause)-1]
 			clause = strings.TrimSpace(clause)
 		}
+	}
+
+	// Strip same-schema qualifiers from function calls and type casts.
+	// pg_get_constraintdef may render same-schema references as qualified depending
+	// on the session's search_path. Strip them to ensure both desired and current
+	// state produce consistent unqualified expressions. (Issue #445)
+	if tableSchema != "" && strings.Contains(clause, tableSchema+".") {
+		prefix := tableSchema + "."
+		funcPattern := regexp.MustCompile(regexp.QuoteMeta(prefix) + `([a-zA-Z_][a-zA-Z0-9_]*)\(`)
+		clause = funcPattern.ReplaceAllString(clause, `${1}(`)
+		typePattern := regexp.MustCompile(`::` + regexp.QuoteMeta(prefix) + `([a-zA-Z_][a-zA-Z0-9_]*)`)
+		clause = typePattern.ReplaceAllString(clause, "::${1}")
 	}
 
 	// Apply basic normalizations for PostgreSQL internal representations
