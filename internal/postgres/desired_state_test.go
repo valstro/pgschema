@@ -362,3 +362,94 @@ func TestEnhanceApplyError(t *testing.T) {
 		}
 	})
 }
+
+func TestExtractUniqueConstraintsAsAlterTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		sql      string
+		expected string
+	}{
+		{
+			name:     "no UNIQUE constraints",
+			sql:      "CREATE TABLE stuff (id uuid, CONSTRAINT stuff_pkey PRIMARY KEY (id));",
+			expected: "",
+		},
+		{
+			name: "UNIQUE on PK columns",
+			sql: `CREATE TABLE stuff (
+    id uuid NOT NULL,
+    name varchar(255) NOT NULL,
+    CONSTRAINT stuff_pkey PRIMARY KEY (id),
+    CONSTRAINT stuff_id_unique UNIQUE (id)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE stuff ADD CONSTRAINT stuff_id_unique UNIQUE (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+		{
+			name: "UNIQUE with NULLS NOT DISTINCT",
+			sql: `CREATE TABLE stuff (
+    id uuid NOT NULL,
+    CONSTRAINT stuff_pkey PRIMARY KEY (id),
+    CONSTRAINT stuff_id_unique UNIQUE NULLS NOT DISTINCT (id)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE stuff ADD CONSTRAINT stuff_id_unique UNIQUE NULLS NOT DISTINCT (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+		{
+			name: "multiple tables with UNIQUE",
+			sql: `CREATE TABLE t1 (
+    id integer,
+    CONSTRAINT t1_pkey PRIMARY KEY (id),
+    CONSTRAINT t1_id_unique UNIQUE (id)
+);
+CREATE TABLE t2 (
+    id uuid,
+    CONSTRAINT t2_pkey PRIMARY KEY (id),
+    CONSTRAINT t2_id_unique UNIQUE (id)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE t1 ADD CONSTRAINT t1_id_unique UNIQUE (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;\nDO $pgschema$ BEGIN ALTER TABLE t2 ADD CONSTRAINT t2_id_unique UNIQUE (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+		{
+			name: "quoted constraint name",
+			sql: `CREATE TABLE stuff (
+    id uuid NOT NULL,
+    CONSTRAINT "MyUnique" UNIQUE (id)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE stuff ADD CONSTRAINT \"MyUnique\" UNIQUE (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+		{
+			name: "composite UNIQUE",
+			sql: `CREATE TABLE stuff (
+    a integer,
+    b integer,
+    CONSTRAINT stuff_pkey PRIMARY KEY (a, b),
+    CONSTRAINT stuff_ab_unique UNIQUE (a, b)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE stuff ADD CONSTRAINT stuff_ab_unique UNIQUE (a, b); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+		{
+			name: "UNIQUE inside dollar-quoted body is ignored",
+			sql: `CREATE FUNCTION f() RETURNS void AS $$
+BEGIN
+    CREATE TABLE stuff (id integer, CONSTRAINT stuff_u UNIQUE (id));
+END;
+$$ LANGUAGE plpgsql;`,
+			expected: "",
+		},
+		{
+			name: "unlogged table",
+			sql: `CREATE UNLOGGED TABLE stuff (
+    id integer,
+    CONSTRAINT stuff_u UNIQUE (id)
+);`,
+			expected: "\nDO $pgschema$ BEGIN ALTER TABLE stuff ADD CONSTRAINT stuff_u UNIQUE (id); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ExtractUniqueConstraintsAsAlterTable(tc.sql)
+			if result != tc.expected {
+				t.Errorf("mismatch:\n  got:    %q\n  expect: %q", result, tc.expected)
+			}
+		})
+	}
+}

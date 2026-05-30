@@ -243,11 +243,23 @@ func (ep *EmbeddedPostgres) ApplySchema(ctx context.Context, schema string, sql 
 	// so we need to rewrite it to point to the temporary schema (issue #335)
 	schemaAgnosticSQL = replaceSchemaInSearchPath(schemaAgnosticSQL, schema, ep.tempSchema)
 
+	// Extract UNIQUE constraints from CREATE TABLE statements before execution.
+	// PostgreSQL's CREATE TABLE silently drops UNIQUE constraints whose columns match
+	// the PRIMARY KEY. Re-adding them via ALTER TABLE preserves them. (Issue #446)
+	uniqueAlterSQL := ExtractUniqueConstraintsAsAlterTable(schemaAgnosticSQL)
+
 	// Execute the SQL directly
 	// Note: Desired state SQL should never contain operations like CREATE INDEX CONCURRENTLY
 	// that cannot run in transactions. Those are migration details, not state declarations.
 	if _, err := util.ExecContextWithLogging(ctx, conn, schemaAgnosticSQL, "apply desired state SQL to temporary schema"); err != nil {
 		return fmt.Errorf("failed to apply schema SQL to temporary schema %s: %w", ep.tempSchema, enhanceApplyError(err, schemaAgnosticSQL))
+	}
+
+	// Re-add UNIQUE constraints that PostgreSQL may have silently dropped (Issue #446)
+	if uniqueAlterSQL != "" {
+		if _, err := util.ExecContextWithLogging(ctx, conn, uniqueAlterSQL, "re-add UNIQUE constraints on PK columns"); err != nil {
+			return fmt.Errorf("failed to re-add UNIQUE constraints in temporary schema %s: %w", ep.tempSchema, err)
+		}
 	}
 
 	return nil

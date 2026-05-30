@@ -1,0 +1,14 @@
+Plan: 1 to modify.
+
+Summary by type:
+  tables: 1 to modify
+
+Tables:
+  ~ stuff
+    + stuff_id_unique (constraint)
+
+DDL to be executed:
+--------------------------------------------------
+
+ALTER TABLE stuff
+ADD CONSTRAINT stuff_id_unique UNIQUE (id);

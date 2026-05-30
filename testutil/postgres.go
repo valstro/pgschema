@@ -109,6 +109,16 @@ func ParseSQLToIRWithSetup(t *testing.T, embeddedPG *postgres.EmbeddedPostgres, 
 		t.Fatalf("Failed to apply SQL to embedded PostgreSQL: %v", err)
 	}
 
+	// Re-add UNIQUE constraints that PostgreSQL may have silently dropped (Issue #446).
+	// PostgreSQL's CREATE TABLE parser drops UNIQUE constraints on PK columns, but
+	// ALTER TABLE ADD CONSTRAINT preserves them.
+	uniqueAlterSQL := postgres.ExtractUniqueConstraintsAsAlterTable(sqlContent)
+	if uniqueAlterSQL != "" {
+		if _, err := conn.ExecContext(ctx, uniqueAlterSQL); err != nil {
+			t.Fatalf("Failed to re-add UNIQUE constraints: %v", err)
+		}
+	}
+
 	// Inspect the database to get IR
 	inspector := ir.NewInspector(conn, nil)
 	irResult, err := inspector.BuildIR(ctx, schema)
