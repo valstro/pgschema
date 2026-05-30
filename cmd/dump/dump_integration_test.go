@@ -130,6 +130,13 @@ func TestDumpCommand_Issue345ArrayCast(t *testing.T) {
 	runExactMatchTest(t, "issue_345_array_cast")
 }
 
+func TestDumpCommand_Issue446UniqueOnPKColumns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+	runExactMatchTest(t, "issue_446_unique_on_pk_columns")
+}
+
 func TestDumpCommand_Issue396CheckConstraintIsNotNull(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

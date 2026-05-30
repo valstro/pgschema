@@ -449,6 +449,120 @@ func replaceSchemaInDefaultPrivileges(sql string, targetSchema, tempSchema strin
 	return result
 }
 
+// extractUniqueConstraintsAsAlterTable scans SQL for UNIQUE constraints defined
+// inline in CREATE TABLE statements and generates ALTER TABLE ADD CONSTRAINT
+// statements for them.
+//
+// PostgreSQL's CREATE TABLE parser silently drops UNIQUE constraints whose columns
+// exactly match the PRIMARY KEY columns. This is an optimization that PostgreSQL
+// applies during table creation, but it causes asymmetric IR when comparing desired
+// state (loaded via CREATE TABLE) against current state (where the UNIQUE constraint
+// was created separately via ALTER TABLE and persists in pg_constraint).
+//
+// The fix: after executing the main SQL, re-add UNIQUE constraints via ALTER TABLE.
+// ALTER TABLE ADD CONSTRAINT preserves UNIQUE constraints even when they overlap
+// with a PRIMARY KEY. If the constraint already exists (because PostgreSQL didn't
+// drop it), the DO block catches the duplicate_object error and skips it.
+//
+// See: https://github.com/pgplex/pgschema/issues/446
+func ExtractUniqueConstraintsAsAlterTable(sql string) string {
+	var alterStatements []string
+
+	// Track current table name while scanning CREATE TABLE bodies
+	// Pattern: CREATE TABLE [IF NOT EXISTS] [schema.]table_name (
+	createTableRe := regexp.MustCompile(`(?i)CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)\s*\(`)
+
+	// Pattern for table-level UNIQUE constraints inside CREATE TABLE:
+	//   CONSTRAINT <name> UNIQUE [NULLS NOT DISTINCT] (<columns>)
+	// Also handles temporal: CONSTRAINT <name> UNIQUE (<cols> WITHOUT OVERLAPS)
+	uniqueConstraintRe := regexp.MustCompile(`(?i)CONSTRAINT\s+("?[^"\s]+"?)\s+UNIQUE(\s+NULLS\s+NOT\s+DISTINCT)?\s*\(([^)]+)\)`)
+
+	// Split into dollar-quoted segments to avoid matching inside function bodies
+	segments := splitDollarQuotedSegments(sql)
+
+	for _, seg := range segments {
+		if seg.quoted {
+			continue
+		}
+
+		// Find all CREATE TABLE statements in this segment
+		tableMatches := createTableRe.FindAllStringSubmatchIndex(seg.text, -1)
+		for _, tableLoc := range tableMatches {
+			tableName := seg.text[tableLoc[2]:tableLoc[3]]
+
+			// Find the matching closing parenthesis for the CREATE TABLE body
+			bodyStart := tableLoc[1] - 1 // position of '('
+			bodyEnd := findMatchingParen(seg.text, bodyStart)
+			if bodyEnd < 0 {
+				continue
+			}
+
+			body := seg.text[bodyStart : bodyEnd+1]
+
+			// Find all UNIQUE constraints in this CREATE TABLE body
+			uniqueMatches := uniqueConstraintRe.FindAllStringSubmatch(body, -1)
+			for _, m := range uniqueMatches {
+				constraintName := m[1]
+				nullsNotDistinct := strings.TrimSpace(m[2])
+				columns := strings.TrimSpace(m[3])
+
+				modifier := ""
+				if nullsNotDistinct != "" {
+					modifier = " NULLS NOT DISTINCT"
+				}
+
+				// Generate ALTER TABLE with exception handling for duplicate constraints
+				alter := fmt.Sprintf(
+					"DO $pgschema$ BEGIN ALTER TABLE %s ADD CONSTRAINT %s UNIQUE%s (%s); EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $pgschema$;",
+					tableName, constraintName, modifier, columns,
+				)
+				alterStatements = append(alterStatements, alter)
+			}
+		}
+	}
+
+	if len(alterStatements) == 0 {
+		return ""
+	}
+
+	return "\n" + strings.Join(alterStatements, "\n")
+}
+
+// findMatchingParen finds the index of the closing parenthesis matching the
+// opening parenthesis at position start. Returns -1 if not found.
+func findMatchingParen(s string, start int) int {
+	if start >= len(s) || s[start] != '(' {
+		return -1
+	}
+	depth := 0
+	inSingleQuote := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if inSingleQuote {
+			if ch == '\'' {
+				if i+1 < len(s) && s[i+1] == '\'' {
+					i++ // skip escaped quote
+				} else {
+					inSingleQuote = false
+				}
+			}
+			continue
+		}
+		switch ch {
+		case '\'':
+			inSingleQuote = true
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
 // enhanceApplyError extracts the surrounding SQL context from a PostgreSQL error's
 // position field to help the user locate the problematic statement in their schema files.
 func enhanceApplyError(err error, sql string) error {

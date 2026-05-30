@@ -1,0 +1,9 @@
+{
+  "name": "issue_446_unique_on_pk_columns",
+  "description": "Test that UNIQUE constraints on PRIMARY KEY columns are preserved in dump output",
+  "source": "https://github.com/pgplex/pgschema/issues/446",
+  "notes": [
+    "PostgreSQL allows UNIQUE constraints on the same columns as a PRIMARY KEY",
+    "Both constraints should be preserved in dump output"
+  ]
+}
